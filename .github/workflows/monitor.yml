@@ -3,7 +3,12 @@ name: Padel monitor
 on:
   schedule:
     - cron: "*/15 * * * *"   # elke 15 minuten (GitHub kan dit uitstellen); 's nachts 01-07 slaat het script zelf over
-  workflow_dispatch: {}       # handmatig starten via het tabblad Actions
+  workflow_dispatch:          # handmatig starten via het tabblad Actions
+    inputs:
+      proef:
+        description: "Proefmelding: stuur alles wat nu vrij is als bericht"
+        type: boolean
+        default: false
 
 concurrency:
   group: padel-monitor
@@ -29,6 +34,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           KNLTB_API_KEY: ${{ secrets.KNLTB_API_KEY }}
           KNLTB_USER_TOKEN: ${{ secrets.KNLTB_USER_TOKEN }}
+          PROEF: ${{ inputs.proef }}
         run: python3 monitor.py
 
       - name: Stand opslaan
