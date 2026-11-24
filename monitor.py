@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 TZ = ZoneInfo("Europe/Amsterdam")  # de GitHub-server draait op UTC, wij rekenen in NL-tijd
 
 API = "https://api.knltb.club/v1/pub/tennis/clubs/{club_id}/availability_timeline"
-UA = "padel-monitor/2.0 (persoonlijk gebruik)"
+UA = "KNLTB/202610051322 CFNetwork/3896.200.61 Darwin/27.2.0"
 STATE_FILE = os.environ.get("STATE_FILE", "state/seen.json")
 DAGEN = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 
@@ -53,7 +53,9 @@ def fetch_day(club_id, day):
         url,
         headers={
             "Authorization": f"Basic {key}",
-            "Accept": "application/json",
+            "Accept": "*/*",
+            "Accept-Language": "nl-NL,nl;q=0.9",
+            "Content-Type": "application/json",
             "User-Agent": UA,
         },
     )
@@ -239,6 +241,22 @@ def main():
             detail = ""
             if isinstance(e, urllib.error.HTTPError):
                 detail = f" (HTTP {e.code}: {e.read()[:200].decode('utf-8', 'replace')})"
+                if not getattr(main, "_diag", False):
+                    main._diag = True
+                    kop = {k.lower(): v for k, v in e.headers.items()}
+                    print("Diagnose antwoordkoppen:", {k: kop[k] for k in ("www-authenticate", "server", "cf-ray", "x-lisa-error") if k in kop})
+                    base = API.format(club_id=club_id).rsplit("/", 1)[0]
+                    for naam, met_token in (("alleen algemene sleutel", False), ("met persoonlijke sleutel", True)):
+                        try:
+                            h = {"Authorization": "Basic " + os.environ.get("KNLTB_API_KEY", "").strip().removeprefix("Basic ").strip(), "User-Agent": UA, "Accept": "*/*"}
+                            if met_token:
+                                h["x-lisa-auth-token"] = os.environ.get("KNLTB_USER_TOKEN", "").strip()
+                            with urllib.request.urlopen(urllib.request.Request(base, headers=h), timeout=30) as r2:
+                                print(f"Diagnose clubpagina ({naam}): HTTP {r2.status}")
+                        except urllib.error.HTTPError as e2:
+                            print(f"Diagnose clubpagina ({naam}): HTTP {e2.code}")
+                        except Exception as e2:
+                            print(f"Diagnose clubpagina ({naam}): {type(e2).__name__}")
             print(f"Fout bij {ds}: {e}{detail}", file=sys.stderr)
             fouten += 1
             if isinstance(e, urllib.error.HTTPError) and e.code in (401, 403):
