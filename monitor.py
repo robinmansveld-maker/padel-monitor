@@ -8,6 +8,7 @@ voor banen die sinds de vorige controle NIEUW vrij zijn gekomen.
 Alleen standaardbibliotheek, geen extra installatie nodig.
 """
 import html
+import http.cookiejar
 import json
 import os
 import re
@@ -22,6 +23,10 @@ from zoneinfo import ZoneInfo
 TZ = ZoneInfo("Europe/Amsterdam")  # de GitHub-server draait op UTC, wij rekenen in NL-tijd
 
 BASE = "https://meetandplay.nl/club/{club_id}"
+LIVEWIRE_URL = "https://meetandplay.nl/livewire/update"
+CSRF_RE = re.compile(r'<meta name="csrf-token" content="([^"]+)"')
+SNAP_RE = re.compile(r'wire:snapshot="([^"]+)"')
+TIME_CHIP_RE = re.compile(r'name="time"\s+value="(\d{1,2}:\d{2})"')
 UA = "Mozilla/5.0 (compatible; padel-monitor/1.0; persoonlijk gebruik)"
 STATE_FILE = os.environ.get("STATE_FILE", "state/seen.json")
 DAGEN = ["ma", "di", "wo", "do", "vr", "za", "zo"]
@@ -41,12 +46,61 @@ def load_config(path="config.json"):
 
 
 def fetch_day(club_id, day):
+    """Geeft een lijst met HTML-stukken terug: één per starttijd van die dag.
+
+    De pagina toont per keer alleen de banen van één gekozen starttijd
+    (de knoppen 09:00, 11:00, 12:30, ...). Daarom vragen we elke starttijd
+    apart op, net zoals de website zelf doet als je op zo'n knop klikt.
+    """
     qs = urllib.parse.urlencode({"date": day.isoformat(), "sport": "padel"})
-    req = urllib.request.Request(
-        f"{BASE.format(club_id=club_id)}?{qs}", headers={"User-Agent": UA}
+    url = f"{BASE.format(club_id=club_id)}?{qs}"
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
     )
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return r.read().decode("utf-8", errors="replace")
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with opener.open(req, timeout=30) as r:
+        page = r.read().decode("utf-8", errors="replace")
+
+    csrf = CSRF_RE.search(page)
+    snapshot = None
+    for m in SNAP_RE.finditer(page):
+        s = html.unescape(m.group(1))
+        if "club.v2.court-show" in s:
+            snapshot = s
+            break
+    tijden = list(dict.fromkeys(TIME_CHIP_RE.findall(page)))
+    if not tijden:
+        return [page]  # geen starttijden = geen vrije banen die dag
+    if not (csrf and snapshot):
+        raise ValueError("pagina heeft een andere opbouw dan verwacht")
+
+    stukken = []
+    for t in tijden:
+        body = json.dumps(
+            {
+                "_token": csrf.group(1),
+                "components": [
+                    {"snapshot": snapshot, "updates": {"time": t}, "calls": []}
+                ],
+            }
+        ).encode()
+        rq = urllib.request.Request(
+            LIVEWIRE_URL,
+            data=body,
+            headers={
+                "User-Agent": UA,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "X-Livewire": "1",
+                "X-CSRF-TOKEN": csrf.group(1),
+                "Referer": url,
+            },
+        )
+        with opener.open(rq, timeout=30) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        stukken.append(data["components"][0]["effects"]["html"])
+        time.sleep(0.3)
+    return stukken
 
 
 def parse_slots(page, day):
@@ -167,13 +221,15 @@ def main():
     new_state = dict(state)
     nieuw = []
     fouten = 0
+    gezien = 0  # alle vrije banen die de site toont
+    passend = 0  # daarvan binnen jouw tijden en boekvenster
 
     for offset in range(cfg.get("dagen_vooruit", 14) + 1):
         day = vandaag + timedelta(days=offset)
         ds = day.isoformat()
         try:
-            page = fetch_day(club_id, day)
-        except (urllib.error.URLError, TimeoutError) as e:
+            paginas = fetch_day(club_id, day)
+        except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as e:
             # Bij een fout houden we de vorige stand voor die dag vast,
             # zodat we geen valse 'nieuw vrij'-meldingen krijgen.
             print(f"Fout bij {ds}: {e}", file=sys.stderr)
@@ -182,11 +238,15 @@ def main():
             continue
         # Alleen banen die nu al te boeken zijn (binnen het 72-uursvenster).
         # Zodra een vrije baan het venster binnenkomt, geldt hij als "nieuw" en volgt een melding.
+        alle = {}
+        for pagina in paginas:
+            for s in parse_slots(pagina, day):
+                alle[key(s)] = s
         slots = [
-            s
-            for s in parse_slots(page, day)
-            if wanted(s, cfg) and bookable_now(s, cfg, now)
+            s for s in alle.values() if wanted(s, cfg) and bookable_now(s, cfg, now)
         ]
+        gezien += len(alle)
+        passend += len(slots)
         keys = sorted(key(s) for s in slots)
         vorige = set(state.get(ds, []))
         if ds in state:  # eerste run van een dag: wel melden als er iets is
@@ -208,6 +268,7 @@ def main():
         sys.exit(1)
 
     save_state(new_state)
+    print(f"{gezien} vrije banen gezien, {passend} binnen je wensen.")
 
     if nieuw:
         nieuw.sort(key=lambda s: (s["datum"], s["start"], s["baan"]))
