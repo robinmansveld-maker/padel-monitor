@@ -3,7 +3,6 @@
   "dagen_vooruit": 3,
   "boekvenster_uren": 72,
   "duur_minuten": [
-    60,
     90
   ],
   "tijdvensters": {
@@ -29,6 +28,7 @@
       "00:00-23:59"
     ]
   },
-  "grijs_min_minuten": 60,
-  "telefoon": "079 351 7059"
+  "telefoon": "079 351 7059",
+  "speelduur_minuten": 90,
+  "max_banen_combinatie": 2
 }
