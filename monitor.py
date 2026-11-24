@@ -39,6 +39,11 @@ def fetch_day(club_id, day):
         with open(sample, encoding="utf-8") as f:
             return json.load(f)
     key = os.environ.get("KNLTB_API_KEY", "").strip()
+    if key.lower().startswith("basic "):  # per ongeluk mee gekopieerd: weghalen
+        key = key[6:].strip()
+    if not getattr(fetch_day, "_gemeld", False):
+        fetch_day._gemeld = True
+        print(f"API-sleutel gevonden ({len(key)} tekens).")
     if not key:
         print("KNLTB_API_KEY ontbreekt (GitHub-geheim niet ingesteld).", file=sys.stderr)
         sys.exit(1)
