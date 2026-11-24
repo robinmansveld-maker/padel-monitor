@@ -218,8 +218,8 @@ def extra_opties(slots, ds, cfg):
                 g["baan"] == baan and a <= to_minutes(g["start"]) and to_minutes(g["einde"]) <= b
                 for g in groen
             )
-            if "grijs" not in kinds and heeft_groen:
-                continue
+            if heeft_groen:
+                continue  # hier is al een groene 90 minuten online te boeken
             s0 = next((s for s in range(a, b - dur + 1, 30) if _in_venster(s, windows)), None)
             if s0 is not None:
                 opts.append(_optie(ds, s0, b, baan, "bel"))
@@ -297,22 +297,26 @@ def fmt(slot):
     )
 
 
-def bouw_bericht(nieuw, cfg):
+def bouw_bericht(huidig, nieuw, cfg):
+    """Twee aparte overzichten van alles wat nu vrij is; nieuwe regels krijgen een 🆕."""
     dur = cfg.get("speelduur_minuten", 90)
     tel = cfg.get("telefoon", "")
+    nieuwe = {key(s) for s in nieuw}
     groepen = [
-        ("groen", f"\n✅ {dur} min online te boeken in de ClubApp:"),
-        ("bel", f"\n📞 Vrij, maar niet als {dur} min online te boeken. Bel de club {tel}:".rstrip()),
-        ("combi", f"\n🔀 Alleen te halen door banen te combineren. Bel de club {tel}:".rstrip()),
+        (("groen",), f"✅ DIRECT TE BOEKEN in de ClubApp ({dur} min):"),
+        (("bel", "combi"), f"🔀 NIET direct boekbaar, wel {dur} min te spelen door banen te combineren. Bel de club {tel}:".rstrip()),
     ]
     delen = ["🎾 Padelbaan vrij bij Meerzicht!"]
-    for soort, kop in groepen:
-        lijst = sorted((s for s in nieuw if s["soort"] == soort), key=_sorteer)
-        if lijst:
-            delen.append(kop)
-            delen += ["• " + fmt(s) for s in lijst[:15]]
-            if len(lijst) > 15:
-                delen.append(f"…en {len(lijst) - 15} meer")
+    for soorten, kop in groepen:
+        lijst = sorted((s for s in huidig if s["soort"] in soorten), key=_sorteer)
+        delen.append("\n" + kop)
+        if not lijst:
+            delen.append("• geen")
+            continue
+        for s in lijst[:20]:
+            delen.append(("🆕 " if key(s) in nieuwe else "• ") + fmt(s))
+        if len(lijst) > 20:
+            delen.append(f"…en {len(lijst) - 20} meer")
     return "\n".join(delen)
 
 
@@ -337,6 +341,7 @@ def main():
     state = load_state()
     new_state = dict(state)
     nieuw = []
+    huidig = []
     fouten = 0
     auth_fouten = 0
     gezien = {"groen": 0, "grijs": 0}
@@ -387,6 +392,7 @@ def main():
         slots = [s for s in kandidaten if bookable_now(s, cfg, now)]
         for s in slots:
             passend[s["soort"]] += 1
+        huidig += slots
         vorige = set(state.get(ds, []))
         for s in slots:
             if key(s) not in vorige:
@@ -418,7 +424,7 @@ def main():
     )
 
     if nieuw:
-        send_telegram(bouw_bericht(nieuw, cfg))
+        send_telegram(bouw_bericht(huidig, nieuw, cfg))
         print(f"{len(nieuw)} nieuwe baan/banen gemeld.")
     else:
         print(f"{now:%H:%M} Geen nieuwe banen binnen je wensen.")
