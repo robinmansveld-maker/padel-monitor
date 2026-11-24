@@ -423,6 +423,10 @@ def main():
         f"Binnen je wensen: {passend['groen']} groen, {passend['bel']} bellen, {passend['combi']} combinatie."
     )
 
+    if os.environ.get("PROEF") == "true":  # proefmelding: alles tonen alsof het nieuw is
+        nieuw = list(huidig)
+        print("Proefmelding aangevraagd.")
+
     if nieuw:
         send_telegram(bouw_bericht(huidig, nieuw, cfg))
         print(f"{len(nieuw)} nieuwe baan/banen gemeld.")
