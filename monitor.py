@@ -216,7 +216,7 @@ def _sorteer(s):
 
 def main():
     cfg = load_config()
-    club_id = cfg["club_id"]
+    club_id = cfg.get("knltb_club_id", "46b41147-1ceb-4b17-bc86-22b22b716048")  # ClubApp-nummer (niet het Meet & Play-nummer)
     now = datetime.now(TZ)
     if os.environ.get("NOW_OVERRIDE"):  # alleen voor testen
         now = datetime.fromisoformat(os.environ["NOW_OVERRIDE"]).replace(tzinfo=TZ)
