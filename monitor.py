@@ -128,18 +128,123 @@ def wanted(slot, cfg):
     windows = cfg.get("tijdvensters", {}).get(dag)
     if not windows:
         return False
-    if slot["soort"] == "groen":
-        if cfg.get("duur_minuten") and slot["duur"] not in cfg["duur_minuten"]:
-            return False
-    else:  # grijs: moet lang genoeg zijn om te spelen
-        if slot["duur"] < cfg.get("grijs_min_minuten", 60):
-            return False
+    if slot["soort"] != "groen":
+        return False  # grijs/bel/combi worden apart bepaald (extra_opties)
+    if cfg.get("duur_minuten") and slot["duur"] not in cfg["duur_minuten"]:
+        return False
     start = to_minutes(slot["start"])
     for w in windows:
         van, tot = w.split("-")
         if to_minutes(van) <= start <= to_minutes(tot):
             return True
     return False
+
+
+def _hhmm(m):
+    m %= 1440
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def _in_venster(start_min, windows):
+    for w in windows or []:
+        van, tot = w.split("-")
+        if to_minutes(van) <= start_min <= to_minutes(tot):
+            return True
+    return False
+
+
+def vrije_intervallen(slots):
+    """Per baan de samengevoegde vrije tijd (groen en grijs samen), in minuten van de dag."""
+    per = {}
+    for s in slots:
+        a, b = to_minutes(s["start"]), to_minutes(s["einde"])
+        if b <= a:
+            b += 1440
+        per.setdefault(s["baan"], []).append((a, b, s["soort"]))
+    res = {}
+    for baan, lst in per.items():
+        merged = []
+        for a, b, k in sorted(lst):
+            if merged and a <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], b)
+                merged[-1][2].add(k)
+            else:
+                merged.append([a, b, {k}])
+        res[baan] = merged
+    return res
+
+
+def _optie(ds, a, b, baan, soort):
+    return {
+        "datum": ds, "start": _hhmm(a), "einde": _hhmm(b),
+        "duur": b - a, "baan": baan, "soort": soort,
+    }
+
+
+def _keten(iv, s, e):
+    """Kortste rij banen die samen s..e dekt (greedy); None als er een gat zit."""
+    t, plan = s, []
+    while t < e:
+        best = None
+        for baan, lst in iv.items():
+            for a, b, _ in lst:
+                if a <= t < b and (best is None or b > best[1]):
+                    best = (baan, b)
+        if best is None:
+            return None
+        plan.append((best[0], t, min(best[1], e)))
+        t = best[1]
+    return plan
+
+
+def extra_opties(slots, ds, cfg):
+    """Opties voor de speelduur (90 min) die niet als groene 90-minuten-baan online te boeken zijn:
+    'bel' = op één baan aaneengesloten vrij, maar niet als 90 min online te boeken;
+    'combi' = alleen te halen door twee banen na elkaar te combineren."""
+    dur = cfg.get("speelduur_minuten", 90)
+    max_seg = cfg.get("max_banen_combinatie", 2)
+    windows = cfg.get("tijdvensters", {}).get(DAGEN[date.fromisoformat(ds).weekday()])
+    if not windows:
+        return []
+    iv = vrije_intervallen(slots)
+    groen = [s for s in slots if s["soort"] == "groen" and s["duur"] >= dur]
+    opts = []
+    # 1. één baan, aaneengesloten vrij maar niet als groene 90 online te boeken
+    for baan, lst in iv.items():
+        for a, b, kinds in lst:
+            if b - a < dur:
+                continue
+            heeft_groen = any(
+                g["baan"] == baan and a <= to_minutes(g["start"]) and to_minutes(g["einde"]) <= b
+                for g in groen
+            )
+            if "grijs" not in kinds and heeft_groen:
+                continue
+            s0 = next((s for s in range(a, b - dur + 1, 30) if _in_venster(s, windows)), None)
+            if s0 is not None:
+                opts.append(_optie(ds, s0, b, baan, "bel"))
+    # 2. combinaties van banen
+    enkel, combi = [], []
+    for s in range(0, 24 * 60, 30):
+        if not _in_venster(s, windows):
+            continue
+        plan = _keten(iv, s, s + dur)
+        if plan is None:
+            continue
+        if len(plan) == 1:
+            enkel.append((s, plan))
+        elif len(plan) <= max_seg:
+            combi.append((s, plan))
+    laatste = None
+    for s, plan in combi:
+        if any(abs(s - e) < dur for e, _ in enkel):
+            continue  # kan al op één baan; dat staat hierboven
+        if laatste is not None and s < laatste + dur:
+            continue  # zelfde stuk vrije tijd, niet nog eens melden
+        laatste = s
+        tekst = " → ".join(f"{b.replace('Padelbaan', 'Baan')} {_hhmm(x)}-{_hhmm(y)}" for b, x, y in plan)
+        opts.append(_optie(ds, s, s + dur, tekst, "combi"))
+    return opts
 
 
 def key(slot):
@@ -193,20 +298,21 @@ def fmt(slot):
 
 
 def bouw_bericht(nieuw, cfg):
-    groen = sorted((s for s in nieuw if s["soort"] == "groen"), key=_sorteer)
-    grijs = sorted((s for s in nieuw if s["soort"] == "grijs"), key=_sorteer)
+    dur = cfg.get("speelduur_minuten", 90)
+    tel = cfg.get("telefoon", "")
+    groepen = [
+        ("groen", f"\n✅ {dur} min online te boeken in de ClubApp:"),
+        ("bel", f"\n📞 Vrij, maar niet als {dur} min online te boeken. Bel de club {tel}:".rstrip()),
+        ("combi", f"\n🔀 Alleen te halen door banen te combineren. Bel de club {tel}:".rstrip()),
+    ]
     delen = ["🎾 Padelbaan vrij bij Meerzicht!"]
-    if groen:
-        delen.append("\n✅ Online te boeken in de ClubApp:")
-        delen += ["• " + fmt(s) for s in groen[:15]]
-        if len(groen) > 15:
-            delen.append(f"…en {len(groen) - 15} meer")
-    if grijs:
-        tel = cfg.get("telefoon", "")
-        delen.append(f"\n📞 Vrij, maar niet online te boeken. Bel de club {tel}:".rstrip())
-        delen += ["• " + fmt(s) for s in grijs[:15]]
-        if len(grijs) > 15:
-            delen.append(f"…en {len(grijs) - 15} meer")
+    for soort, kop in groepen:
+        lijst = sorted((s for s in nieuw if s["soort"] == soort), key=_sorteer)
+        if lijst:
+            delen.append(kop)
+            delen += ["• " + fmt(s) for s in lijst[:15]]
+            if len(lijst) > 15:
+                delen.append(f"…en {len(lijst) - 15} meer")
     return "\n".join(delen)
 
 
@@ -216,7 +322,7 @@ def _sorteer(s):
 
 def main():
     cfg = load_config()
-    club_id = cfg.get("knltb_club_id", "46b41147-1ceb-4b17-bc86-22b22b716048")  # ClubApp-nummer (niet het Meet & Play-nummer)
+    club_id = cfg["club_id"]
     now = datetime.now(TZ)
     if os.environ.get("NOW_OVERRIDE"):  # alleen voor testen
         now = datetime.fromisoformat(os.environ["NOW_OVERRIDE"]).replace(tzinfo=TZ)
@@ -227,7 +333,7 @@ def main():
     fouten = 0
     auth_fouten = 0
     gezien = {"groen": 0, "grijs": 0}
-    passend = {"groen": 0, "grijs": 0}
+    passend = {"groen": 0, "bel": 0, "combi": 0}
     dagen = cfg.get("dagen_vooruit", 3) + 1
 
     for offset in range(dagen):
@@ -269,7 +375,9 @@ def main():
                 alle[key(s)] = s
         for s in alle.values():
             gezien[s["soort"]] += 1
-        slots = [s for s in alle.values() if wanted(s, cfg) and bookable_now(s, cfg, now)]
+        alle_lijst = list(alle.values())
+        kandidaten = [s for s in alle_lijst if wanted(s, cfg)] + extra_opties(alle_lijst, ds, cfg)
+        slots = [s for s in kandidaten if bookable_now(s, cfg, now)]
         for s in slots:
             passend[s["soort"]] += 1
         vorige = set(state.get(ds, []))
@@ -299,7 +407,7 @@ def main():
 
     print(
         f"Gezien: {gezien['groen']} groene en {gezien['grijs']} grijze banen. "
-        f"Binnen je wensen: {passend['groen']} groen, {passend['grijs']} grijs."
+        f"Binnen je wensen: {passend['groen']} groen, {passend['bel']} bellen, {passend['combi']} combinatie."
     )
 
     if nieuw:
