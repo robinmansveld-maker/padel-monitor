@@ -2,7 +2,7 @@ name: Padel monitor
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # elke 10 minuten (GitHub kan dit soms een paar minuten uitstellen)
+    - cron: "*/15 * * * *"   # elke 15 minuten (GitHub kan dit uitstellen); 's nachts 01-07 slaat het script zelf over
   workflow_dispatch: {}       # handmatig starten via het tabblad Actions
 
 concurrency:
