@@ -58,6 +58,11 @@ def fetch_day(club_id, day):
         },
     )
     token = os.environ.get("KNLTB_USER_TOKEN", "").strip()
+    if token.lower().startswith("x-lisa-auth-token"):  # headernaam per ongeluk mee gekopieerd
+        token = token.split(":", 1)[-1].strip()
+    if not getattr(fetch_day, "_token_gemeld", False):
+        fetch_day._token_gemeld = True
+        print(f"Persoonlijke sleutel: {len(token)} tekens (verwacht: ongeveer 24).")
     if token:  # persoonlijke ClubApp-sleutel; wordt nergens afgedrukt
         req.add_header("x-lisa-auth-token", token)
     with urllib.request.urlopen(req, timeout=30) as r:
