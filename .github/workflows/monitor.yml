@@ -28,6 +28,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           KNLTB_API_KEY: ${{ secrets.KNLTB_API_KEY }}
+          KNLTB_USER_TOKEN: ${{ secrets.KNLTB_USER_TOKEN }}
         run: python3 monitor.py
 
       - name: Stand opslaan
