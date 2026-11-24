@@ -327,6 +327,13 @@ def main():
     if os.environ.get("NOW_OVERRIDE"):  # alleen voor testen
         now = datetime.fromisoformat(os.environ["NOW_OVERRIDE"]).replace(tzinfo=TZ)
     vandaag = now.date()
+    # Rustperiode (standaard 01:00-07:00): geplande runs doen dan niets.
+    rust = cfg.get("rustperiode", ["01:00", "07:00"])
+    if os.environ.get("GITHUB_EVENT_NAME") == "schedule" and rust:
+        m = now.hour * 60 + now.minute
+        if to_minutes(rust[0]) <= m < to_minutes(rust[1]):
+            print(f"{now:%H:%M}: rustperiode, geen controle.")
+            return
     state = load_state()
     new_state = dict(state)
     nieuw = []
