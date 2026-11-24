@@ -57,6 +57,9 @@ def fetch_day(club_id, day):
             "User-Agent": UA,
         },
     )
+    token = os.environ.get("KNLTB_USER_TOKEN", "").strip()
+    if token:  # persoonlijke ClubApp-sleutel; wordt nergens afgedrukt
+        req.add_header("x-lisa-auth-token", token)
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read().decode("utf-8"))
 
@@ -215,6 +218,7 @@ def main():
     new_state = dict(state)
     nieuw = []
     fouten = 0
+    auth_fouten = 0
     gezien = {"groen": 0, "grijs": 0}
     passend = {"groen": 0, "grijs": 0}
     dagen = cfg.get("dagen_vooruit", 3) + 1
@@ -232,6 +236,8 @@ def main():
                 detail = f" (HTTP {e.code}: {e.read()[:200].decode('utf-8', 'replace')})"
             print(f"Fout bij {ds}: {e}{detail}", file=sys.stderr)
             fouten += 1
+            if isinstance(e, urllib.error.HTTPError) and e.code in (401, 403):
+                auth_fouten += 1
             time.sleep(1)
             continue
         alle = {}
@@ -258,6 +264,14 @@ def main():
     # Alleen als ALLES mislukte stoppen met foutcode (zichtbaar in GitHub).
     if fouten == dagen:
         print("Alle verzoeken mislukt; stand niet bijgewerkt.", file=sys.stderr)
+        if auth_fouten == dagen and state.get("_auth_melding") != vandaag.isoformat():
+            # Sleutel verlopen of ongeldig: één bericht per dag, zodat je het merkt.
+            send_telegram(
+                "⚠️ De ClubApp-sleutel van de padelmonitor is verlopen. "
+                "Plak een nieuwe in GitHub (secret KNLTB_USER_TOKEN), dan gaat het weer door."
+            )
+            state["_auth_melding"] = vandaag.isoformat()
+            save_state(state)
         sys.exit(1)
 
     print(
@@ -273,6 +287,7 @@ def main():
 
     # Pas opslaan NA het versturen: mislukt Telegram, dan proberen we het de
     # volgende keer opnieuw en gaat de melding niet verloren.
+    new_state.pop("_auth_melding", None)  # sleutel werkt weer
     save_state(new_state)
 
 
