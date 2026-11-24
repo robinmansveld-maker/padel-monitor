@@ -1,0 +1,37 @@
+name: Padel monitor
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # elke 10 minuten (GitHub kan dit soms een paar minuten uitstellen)
+  workflow_dispatch: {}       # handmatig starten via het tabblad Actions
+
+concurrency:
+  group: padel-monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Vorige stand ophalen
+        uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: state-${{ github.run_id }}
+          restore-keys: state-
+
+      - name: Banen controleren
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 monitor.py
+
+      - name: Stand opslaan
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state
+          key: state-${{ github.run_id }}
