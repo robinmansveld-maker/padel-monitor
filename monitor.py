@@ -198,8 +198,16 @@ def send_telegram(text):
     req = urllib.request.Request(
         f"https://api.telegram.org/bot{token}/sendMessage", data=data
     )
-    with urllib.request.urlopen(req, timeout=30) as r:
-        r.read()
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            r.read()
+    except urllib.error.HTTPError as e:
+        print(
+            f"Telegram weigerde het bericht (HTTP {e.code}): "
+            f"{e.read().decode('utf-8', errors='replace')}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 def fmt(slot):
@@ -267,7 +275,6 @@ def main():
         print("Alle verzoeken mislukt; stand niet bijgewerkt.", file=sys.stderr)
         sys.exit(1)
 
-    save_state(new_state)
     print(f"{gezien} vrije banen gezien, {passend} binnen je wensen.")
 
     if nieuw:
@@ -281,6 +288,10 @@ def main():
         print(f"{len(nieuw)} nieuwe baan/banen gemeld.")
     else:
         print(f"{now:%H:%M} Geen nieuwe banen binnen je wensen.")
+
+    # Pas opslaan NA het versturen: mislukt Telegram, dan proberen we het de
+    # volgende keer opnieuw en gaat de melding niet verloren.
+    save_state(new_state)
 
 
 if __name__ == "__main__":
